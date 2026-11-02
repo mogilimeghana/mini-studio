@@ -1,233 +1,453 @@
-import { useState, useEffect } from "react";
+
+import { useState, useEffect, useRef } from "react";
 import axios from "axios";
 import "./App.css";
 
-const API_URL = "https://mini-content-engine-9c4z.onrender.com";
-// Handles both local and external image URLs
+const API_URL = "http://localhost:5000";
+
 const getImageUrl = (url) => {
   if (!url) return "";
-
-  return url.startsWith("http")
-    ? url
-    : `${API_URL}${url}`;
+  return url.startsWith("http") ? url : `${API_URL}${url}`;
 };
 
 function App() {
   const [productName, setProductName] = useState("");
   const [description, setDescription] = useState("");
   const [productImage, setProductImage] = useState(null);
+  const [previewImage, setPreviewImage] = useState("");
 
   const [jobId, setJobId] = useState("");
   const [status, setStatus] = useState("");
   const [imageUrl, setImageUrl] = useState("");
-
   const [jobs, setJobs] = useState([]);
+  const [isGenerating, setIsGenerating] = useState(false);
 
-  // Fetch all jobs
+  const pollingRef = useRef(null);
+  const fileInputRef = useRef(null);
+
   const fetchJobs = async () => {
     try {
       const response = await axios.get(`${API_URL}/jobs`);
       setJobs(response.data);
     } catch (error) {
-      console.error(error);
+      console.error("Fetching jobs failed:", error.message);
     }
   };
 
-  // Load jobs when page opens
   useEffect(() => {
     fetchJobs();
+
+    return () => {
+      if (pollingRef.current) {
+        clearInterval(pollingRef.current);
+      }
+    };
   }, []);
 
-  // Generate content
-  const generateContent = async () => {
-    if (
-      !productName.trim() ||
-      !description.trim() ||
-      !productImage
-    ) {
-      alert("Please enter Product Name, Description and Product Image.");
+  useEffect(() => {
+    if (!productImage) {
+      setPreviewImage("");
       return;
     }
 
+    const objectUrl = URL.createObjectURL(productImage);
+    setPreviewImage(objectUrl);
+
+    return () => URL.revokeObjectURL(objectUrl);
+  }, [productImage]);
+
+  const generateContent = async () => {
+    if (isGenerating) return;
+
+    if (!productName.trim() || !description.trim() || !productImage) {
+      alert("Please enter product name, description and upload an image.");
+      return;
+    }
+
+    setIsGenerating(true);
+    setStatus("processing");
+    setImageUrl("");
+    setJobId("");
+
     try {
       const formData = new FormData();
-
       formData.append("productName", productName);
       formData.append("description", description);
       formData.append("productImage", productImage);
 
       const response = await axios.post(
         `${API_URL}/generate`,
-        formData,
-        {
-          headers: {
-            "Content-Type": "multipart/form-data",
-          },
-        }
+        formData
       );
 
       const id = response.data.jobId;
 
       setJobId(id);
-      setStatus(response.data.status);
-      setImageUrl("");
+      setStatus(response.data.status || "processing");
 
       setProductName("");
       setDescription("");
       setProductImage(null);
 
-      // Poll every 2 seconds
-      const interval = setInterval(async () => {
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
+
+      await fetchJobs();
+
+      if (pollingRef.current) {
+        clearInterval(pollingRef.current);
+      }
+
+      pollingRef.current = setInterval(async () => {
         try {
           const jobResponse = await axios.get(`${API_URL}/jobs/${id}`);
+          const currentStatus = jobResponse.data.status;
 
-          setStatus(jobResponse.data.status);
+          setStatus(currentStatus);
 
-          if (jobResponse.data.status === "completed") {
+          if (currentStatus === "completed") {
             setImageUrl(jobResponse.data.imageUrl);
-            fetchJobs();
-            clearInterval(interval);
+            clearInterval(pollingRef.current);
+            pollingRef.current = null;
+            setIsGenerating(false);
+            await fetchJobs();
+          } else if (currentStatus === "failed") {
+            clearInterval(pollingRef.current);
+            pollingRef.current = null;
+            setIsGenerating(false);
+            await fetchJobs();
           }
         } catch (error) {
-          console.error(error);
-          clearInterval(interval);
+          console.error("Status polling failed:", error.message);
+          clearInterval(pollingRef.current);
+          pollingRef.current = null;
+          setStatus("Unable to check status");
+          setIsGenerating(false);
         }
       }, 2000);
+
     } catch (error) {
-      console.error(error);
-      alert("Failed to generate content");
+      console.error("Generation request failed:", error);
+      setStatus("failed");
+      setIsGenerating(false);
+      await fetchJobs();
+      alert("Failed to submit generation request.");
     }
   };
 
+  const completedJobs = jobs.filter(
+    (job) => job.status === "completed"
+  ).length;
+
+  const getStatusClass = (value) => {
+    if (value === "completed") return "completed";
+    if (value === "failed") return "failed";
+    return "processing";
+  };
+
   return (
-    <div className="container">
-      <div className="card">
-        <h1>Mini Content Engine</h1>
+    <div className="app-shell">
+      <nav className="navbar">
+        <a href="#" className="brand">
+          <span className="brand-icon">✦</span>
+          <span>mini<span className="brand-highlight">studio</span></span>
+        </a>
 
-        <label htmlFor="productName">Product Name</label>
-
-        <input
-          type="text"
-          id="productName"
-          placeholder="Enter product name"
-          value={productName}
-          onChange={(e) => setProductName(e.target.value)}
-        />
-
-        <label htmlFor="description">Product Description</label>
-
-        <textarea
-          id="description"
-          rows="5"
-          placeholder="Enter product description..."
-          value={description}
-          onChange={(e) => setDescription(e.target.value)}
-        />
-
-        <label htmlFor="productImage">Product Image</label>
-
-        <input
-          type="file"
-          id="productImage"
-          accept="image/*"
-          onChange={(e) => setProductImage(e.target.files[0])}
-        />
-
-        <button onClick={generateContent}>
-          Generate
-        </button>
-
-        <div className="result">
-          <p>
-            <strong>Job ID:</strong> {jobId}
-          </p>
-
-          <p>
-            <strong>Status:</strong> {status}
-          </p>
-
-          <p>
-            <strong>Generated Image:</strong>
-          </p>
-
-          {imageUrl && (
-            <img
-              src={getImageUrl(imageUrl)}
-              alt="Generated"
-              width="300"
-              style={{
-                marginTop: "10px",
-                borderRadius: "8px",
-              }}
-            />
-          )}
+        <div className="nav-right">
+          <span className="nav-status">
+            <span className="online-dot"></span>
+            AI Studio
+          </span>
         </div>
+      </nav>
 
-        <hr style={{ margin: "30px 0" }} />
+      <main className="main-content">
+        <section className="hero">
+          <span className="eyebrow">✦ YOUR AI CREATIVE WORKSPACE</span>
+          <h1>Bring your products to life.</h1>
+          <p>
+            Transform ordinary product photos into beautiful,
+            professional visuals with AI.
+          </p>
+        </section>
 
-        <h2>All Jobs</h2>
+        <section className="workspace">
+          <div className="form-panel">
+            <div className="section-heading">
+              <div>
+                <span className="step-label">STEP 01</span>
+                <h2>Product details</h2>
+                <p>Tell us about the product you want to showcase.</p>
+              </div>
+              <span className="heading-icon">✎</span>
+            </div>
 
-        <table
-          border="1"
-          cellPadding="10"
-          style={{
-            width: "100%",
-            borderCollapse: "collapse",
-            marginTop: "20px",
-          }}
-        >
-          <thead>
-            <tr>
-              <th>Job ID</th>
-              <th>Prompt</th>
-              <th>Status</th>
-              <th>Created At</th>
-              <th>Image</th>
-            </tr>
-          </thead>
+            <div className="form-group">
+              <label htmlFor="productName">PRODUCT NAME</label>
+              <input
+                type="text"
+                id="productName"
+                placeholder="e.g. Bloom Essence Perfume"
+                value={productName}
+                onChange={(e) => setProductName(e.target.value)}
+              />
+            </div>
 
-          <tbody>
-            {jobs.length > 0 ? (
-              jobs.map((job) => (
-                <tr key={job.id}>
-                  <td>{job.id.slice(0, 8)}...</td>
+            <div className="form-group">
+              <label htmlFor="description">PRODUCT DESCRIPTION</label>
+              <textarea
+                id="description"
+                rows="5"
+                placeholder="Describe your product, its features, fragrance, materials, or style..."
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+              />
+              <span className="field-hint">
+                A detailed description helps create better results.
+              </span>
+            </div>
 
-                  <td>{job.prompt}</td>
+            <div className="form-group">
+              <label>REFERENCE IMAGE</label>
 
-                  <td>{job.status}</td>
+              <div
+                className={`upload-box ${previewImage ? "has-image" : ""}`}
+                onClick={() => fileInputRef.current?.click()}
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  const file = e.dataTransfer.files?.[0];
+                  if (file && file.type.startsWith("image/")) {
+                    setProductImage(file);
+                  }
+                }}
+              >
+                {previewImage ? (
+                  <div className="selected-file">
+                    <img src={previewImage} alt="Selected product" />
+                    <div>
+                      <strong>{productImage?.name}</strong>
+                      <span>Image ready to upload</span>
+                      <span className="change-image">Click to change</span>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="upload-placeholder">
+                    <span className="upload-icon">↑</span>
+                    <strong>Drop your image here</strong>
+                    <span>or click to browse files</span>
+                    <small>PNG, JPG or JPEG</small>
+                  </div>
+                )}
+              </div>
 
-                  <td>
-                    {new Date(job.created_at).toLocaleString()}
-                  </td>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden-file-input"
+                onChange={(e) =>
+                  setProductImage(e.target.files?.[0] || null)
+                }
+              />
+            </div>
 
-                  <td>
-                    {job.image_url ? (
-                      <a
-                        href={getImageUrl(job.image_url)}
-                        target="_blank"
-                        rel="noreferrer"
-                      >
-                        View
-                      </a>
-                    ) : (
-                      "Not Ready"
-                    )}
-                  </td>
-                </tr>
-              ))
-            ) : (
-              <tr>
-                <td
-                  colSpan="5"
-                  style={{ textAlign: "center" }}
-                >
-                  No jobs found.
-                </td>
-              </tr>
+            <button
+              className="generate-button"
+              onClick={generateContent}
+              disabled={isGenerating}
+            >
+              {isGenerating ? (
+                <>
+                  <span className="spinner"></span>
+                  Creating your image...
+                </>
+              ) : (
+                <>✦ Generate with AI <span>→</span></>
+              )}
+            </button>
+
+            <p className="privacy-note">
+              ✧ Your product image is used as a reference for generation.
+            </p>
+          </div>
+
+          <div className="preview-panel">
+            <div className="section-heading preview-heading">
+              <div>
+                <span className="step-label">STEP 02</span>
+                <h2>Live preview</h2>
+                <p>Your AI-generated product visual appears here.</p>
+              </div>
+              <span className="heading-icon">◫</span>
+            </div>
+
+            <div className="image-stage">
+              {imageUrl ? (
+                <img
+                  src={getImageUrl(imageUrl)}
+                  alt="Generated product"
+                  className="generated-image"
+                />
+              ) : (
+                <div className="empty-preview">
+                  {isGenerating ? (
+                    <>
+                      <span className="large-spinner"></span>
+                      <h3>Creating something beautiful...</h3>
+                      <p>Your image is being generated. Please wait.</p>
+                    </>
+                  ) : (
+                    <>
+                      <div className="preview-art">✦</div>
+                      <h3>Your canvas awaits</h3>
+                      <p>
+                        Upload a product image and generate your
+                        first AI-powered visual.
+                      </p>
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div className="result-meta">
+              <div>
+                <span>GENERATION STATUS</span>
+                <strong className={`status ${getStatusClass(status)}`}>
+                  {status || "Waiting"}
+                </strong>
+              </div>
+
+              {jobId && (
+                <div>
+                  <span>JOB ID</span>
+                  <strong className="job-reference">
+                    {jobId.slice(0, 8)}...
+                  </strong>
+                </div>
+              )}
+            </div>
+
+            {status === "failed" && (
+              <p className="error-message">
+                Image generation failed. Please try again.
+              </p>
             )}
-          </tbody>
-        </table>
-      </div>
+
+            {imageUrl && (
+              <a
+                className="download-button"
+                href={getImageUrl(imageUrl)}
+                download
+                target="_blank"
+                rel="noreferrer"
+              >
+                ↓ Download generated image
+              </a>
+            )}
+          </div>
+        </section>
+
+        <section className="history-section">
+          <div className="history-heading">
+            <div>
+              <span className="step-label">YOUR WORKSPACE</span>
+              <h2>Generation history</h2>
+              <p>All your previous product image generations.</p>
+            </div>
+
+            <div className="history-count">
+              <strong>{jobs.length}</strong>
+              <span>Total jobs</span>
+            </div>
+          </div>
+
+          <div className="stats-row">
+            <div className="stat-card">
+              <span>Total generations</span>
+              <strong>{jobs.length}</strong>
+            </div>
+            <div className="stat-card">
+              <span>Completed</span>
+              <strong>{completedJobs}</strong>
+            </div>
+            <div className="stat-card">
+              <span>Failed</span>
+              <strong>
+                {jobs.filter((job) => job.status === "failed").length}
+              </strong>
+            </div>
+          </div>
+
+          <div className="table-container">
+            <table className="jobs-table">
+              <thead>
+                <tr>
+                  <th>JOB</th>
+                  <th>PROMPT</th>
+                  <th>STATUS</th>
+                  <th>CREATED AT</th>
+                  <th>IMAGE</th>
+                </tr>
+              </thead>
+
+              <tbody>
+                {jobs.length > 0 ? (
+                  jobs.map((job) => (
+                    <tr key={job.id}>
+                      <td className="job-id">
+                        {job.id.slice(0, 8)}...
+                      </td>
+
+                      <td className="prompt-cell" title={job.prompt}>
+                        {job.prompt}
+                      </td>
+
+                      <td>
+                        <span className={`status ${getStatusClass(job.status)}`}>
+                          {job.status}
+                        </span>
+                      </td>
+
+                      <td className="date-cell">
+                        {new Date(job.created_at).toLocaleString()}
+                      </td>
+
+                      <td>
+                        {job.image_url ? (
+                          <a
+                            className="view-link"
+                            href={getImageUrl(job.image_url)}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            View image ↗
+                          </a>
+                        ) : (
+                          <span className="not-ready">Not ready</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td colSpan="5" className="empty-row">
+                      No generations yet. Create your first product visual!
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <footer className="footer">
+          <span>✦ mini studio</span>
+          <span>Made for creative possibilities.</span>
+        </footer>
+      </main>
     </div>
   );
 }

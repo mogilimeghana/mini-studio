@@ -2,13 +2,22 @@ const axios = require("axios");
 
 async function generateImage(prompt) {
   try {
-    const imageUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(
+    const imageUrl = `https://gen.pollinations.ai/image/${encodeURIComponent(
       prompt
-    )}?width=1024&height=1024&nologo=true`;
+    )}`;
 
     const response = await axios.get(imageUrl, {
+      params: {
+        model: "flux",
+        width: 1024,
+        height: 1024,
+        nologo: true,
+      },
+      headers: {
+        Authorization: `Bearer ${process.env.POLLINATIONS_API_KEY}`,
+      },
       responseType: "arraybuffer",
-      timeout: 60000,
+      timeout: 120000,
     });
 
     return response.data;

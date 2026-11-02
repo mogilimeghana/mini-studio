@@ -1,42 +1,43 @@
 const Groq = require("groq-sdk");
 
 const groq = new Groq({
-  apiKey: process.env.GROQ_API_KEY,
+    apiKey: process.env.GROQ_API_KEY,
 });
 
 async function generatePrompt(productName, description) {
-  try {
-    const completion = await groq.chat.completions.create({
-      model: "llama-3.1-8b-instant",
-      messages: [
-        {
-          role: "system",
-          content:
-            "You are an expert AI prompt engineer. Convert product details into a detailed product photography prompt for an AI image generator.",
-        },
-        {
-          role: "user",
-          content: `
-Product Name: ${productName}
+    try {
+        const completion = await groq.chat.completions.create({
+            model: "openai/gpt-oss-20b",
+            messages: [
+                {
+                    role: "system",
+                    content: "You are an expert AI product photography prompt engineer. Return only the final image generation prompt. Do not include reasoning or explanations."
+                },
+                {
+                    role: "user",
+                    content: `Create a detailed image generation prompt for this product:
 
+Product Name: ${productName}
 Description: ${description}
 
-Generate one detailed image generation prompt only.
-Do not explain anything.
-`,
-        },
-      ],
-      temperature: 0.8,
-      max_tokens: 150,
-    });
+Include the product's appearance, background, lighting, composition and photography style. Return the final prompt only.`
+                }
+            ],
+            max_completion_tokens: 1000
+        });
 
-    return completion.choices[0].message.content.trim();
-  } catch (error) {
-    console.error("Groq Error:", error.message);
+        const result = completion.choices[0].message.content;
 
-    // Fallback prompt
-    return `${productName}. ${description}`;
-  }
+        if (!result || !result.trim()) {
+            throw new Error("Groq returned an empty response");
+        }
+
+        return result.trim();
+
+    } catch (error) {
+        console.error("Groq Error:", error.message);
+        throw error;
+    }
 }
 
 module.exports = generatePrompt;
