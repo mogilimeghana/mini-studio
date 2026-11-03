@@ -3,7 +3,7 @@ import { useState, useEffect, useRef } from "react";
 import axios from "axios";
 import "./App.css";
 
-const API_URL = "https://mini-content-engine-9c42.onrender.com";
+const API_URL = "https://mini-content-engine-9c4z.onrender.com";
 
 const getImageUrl = (url) => {
   if (!url) return "";
